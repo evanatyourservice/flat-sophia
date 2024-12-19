@@ -110,8 +110,7 @@ def scale_by_sophia_h(
         vector=None,
         update_preconditioner=None,
     ):
-        if params is None:
-            raise ValueError("params must be provided to sophia's update function.")
+        del params
 
         Hvp = jax.tree.map(lambda h, v: h * v, Hvp, vector)  # hutchinson
 
