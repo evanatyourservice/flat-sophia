@@ -45,7 +45,7 @@ def main(project_to_flat: bool = False):
 
     run_experiment(
         log_to_wandb=True,
-        wandb_entity="evanatyourservice",
+        wandb_entity="",
         wandb_project="image_classification_jax",
         global_seed=100,
         dataset="cifar10",

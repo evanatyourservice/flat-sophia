@@ -1,4 +1,4 @@
-from typing import Any, NamedTuple, Optional, Union, Callable
+from typing import Any, NamedTuple, Optional, Union, Callable, Tuple
 
 import jax
 from jax import numpy as jnp
@@ -8,6 +8,66 @@ from optax._src.numerics import safe_int32_increment
 from optax._src.utils import canonicalize_dtype
 from optax._src.combine import chain
 from optax import tree_utils as otu
+
+
+def hessian_helper(
+    key: jax.random.PRNGKey,
+    train_step: int,
+    loss_fn: Callable,
+    params: base.Params,
+    loss_fn_extra_args: Tuple = (),
+    has_aux: bool = False,
+    preconditioner_update_probability: float = 1.0,
+):
+    """Helper function for computing hessian vector product.
+
+    It returns the loss fn output, gradients, hvp, random vector, and a bool of whether we're
+    updating the preconditioner this step. The hvp, vector, and update cond are then passed
+    into optimizer's update fn.
+
+    Args:
+        key: PRNGKey, random key.
+        train_step: int, current train step needed to init preconditioner on first step.
+        loss_fn: callable, loss function.
+        params: flax.Params, model parameters.
+        loss_fn_extra_args: tuple, extra arguments for loss function to be used as
+            `loss_fn(params, *loss_fn_extra_args)`.
+        has_aux: bool, whether loss function has aux output.
+        preconditioner_update_probability: float, probability of updating the preconditioner.
+
+    Returns:
+        loss_out: jnp.ndarray, output of loss function.
+        grads: flax.Params, gradients.
+        hvp: flax.Params, hessian vector product.
+        vector: flax.Params, random vector.
+        update_preconditioner: bool, whether we're updating preconditioner this step.
+    """
+    obj_fn = lambda params: loss_fn(params, *loss_fn_extra_args)
+    key1, key2 = jax.random.split(key)
+
+    def grad_fn(params):
+        loss_out, grad = jax.value_and_grad(obj_fn, has_aux=has_aux)(params)
+        return grad, loss_out
+
+    def hvp_fn(params):
+        vector = otu.tree_random_like(key1, params, jax.random.normal)
+        grad, hvp, loss_out = jax.jvp(grad_fn, (params,), (vector,), has_aux=True)
+        return grad, loss_out, hvp, vector
+
+    # TODO (evanatyourservice): finite difference hvp option
+
+    def g_fn(params):
+        grad, loss_out = grad_fn(params)
+        dummy_hvp = jax.tree.map(jnp.zeros_like, params)
+        dummy_vector = jax.tree.map(jnp.zeros_like, params)
+        return grad, loss_out, dummy_hvp, dummy_vector
+
+    update_precond = jnp.logical_or(
+        jax.random.uniform(key2) < preconditioner_update_probability, train_step < 2
+    )
+
+    grad, loss_out, hvp, vector = jax.lax.cond(update_precond, hvp_fn, g_fn, params)
+    return loss_out, grad, hvp, vector, update_precond
 
 
 class SophiaHState(NamedTuple):
@@ -131,8 +191,8 @@ def sophia_h(
     gamma: float = 0.01,
     clip_threshold: Optional[float] = 1.0,
     project_to_flat: bool = False,
-    sharp_fraction: float = 0.1,
-    dampening_factor: int = 2,
+    sharp_fraction: float = 0.2,
+    dampening_factor: int = 10,
     mu_dtype: Optional[Any] = None,
     print_win_rate_every_n_steps: int = 0,
 ) -> base.GradientTransformationExtraArgs:
