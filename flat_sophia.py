@@ -17,7 +17,7 @@ def hessian_helper(
     params: base.Params,
     loss_fn_extra_args: Tuple = (),
     has_aux: bool = False,
-    preconditioner_update_probability: float = 1.0,
+    preconditioner_update_probability: float = 0.1,
 ):
     """Helper function for computing hessian vector product.
 
